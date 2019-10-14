@@ -13,7 +13,7 @@ public class MapGenerator : MonoBehaviour
     [SerializeField] Material mapMaterial;
     [SerializeField] Transform target;
 
-    Vector2Int lastTargetChunkPosition;
+    Vector2Int lastTargetChunkPosition = new Vector2Int(Int32.MinValue, Int32.MaxValue);
 
     void Update()
     {
@@ -51,7 +51,7 @@ public class MapGenerator : MonoBehaviour
 
     void GenerateChunkByTargetPosition()
     {
-        if (target is null)
+        if (target == null)
             return;
         
         Vector2Int chunkPosition = WorldToChunk(target.position);
@@ -81,7 +81,7 @@ public class MapGenerator : MonoBehaviour
         }
     }
 
-    void SetVoxel(Vector2Int gridPosition, float density)
+    public void SetVoxel(Vector2Int gridPosition, float density)
     {
         Vector2Int chunkPosition = GridtoChunk(gridPosition);
         if (GetChunk(chunkPosition, out Chunk chunk, true))
@@ -146,7 +146,7 @@ public class MapGenerator : MonoBehaviour
         }
     }
     
-    void AddVoxel(Vector2Int gridPosition, float density)
+    public void AddVoxel(Vector2Int gridPosition, float density)
     {
         Vector2Int chunkPosition = GridtoChunk(gridPosition);
         if (GetChunk(chunkPosition, out Chunk chunk, true))

@@ -36,11 +36,16 @@ public static class MarchingSquares
                     }
                 }
                 
+                // 교차하는 지점이 없다면 끝낸다.
                 if(intersectionBits == 0)
                     continue;
 
+                
+                // 교차하는 변 찾기
                 int edgeBits = EdgeTable[intersectionBits];
 
+                
+                // 교차하는 변의 교차점 보간하여 찾기
                 Vector2[] interpolatedPoints = new Vector2[4];
                 for (int i = 0; i < 4; i++)
                 {
@@ -61,6 +66,7 @@ public static class MarchingSquares
                     }
                 }
                 
+                // 모서리와 변의 교차점을 합친 배열
                 Vector2[] finalPoints = new Vector2[8];
                 for (int i = 0; i < 4; i++)
                 {
@@ -77,6 +83,7 @@ public static class MarchingSquares
                     quadTriangles.Add(gridPosition, new Vector3[6]);
                 }
 
+                // 삼각형 만들기
                 for (int i = 0; i < 9; i += 3)
                 {
                     int index0 = TriangleTable[intersectionBits, i];
@@ -90,6 +97,7 @@ public static class MarchingSquares
                     Vector3 vertex1 = finalPoints[index1] * chunkScale;
                     Vector3 vertex2 = finalPoints[index2] * chunkScale;
                     
+                    // 꽉찬 사각형은 나중에 쓸일이 따로 있으므로 따로 추가하고 넘긴다
                     if (intersectionBits == 15)
                     {
                         quadTriangles[gridPosition][i] = vertex0;
@@ -142,12 +150,12 @@ public static class MarchingSquares
                         int numTriangles = triangles.Count;
                         triangles.Add(numTriangles++);
                         triangles.Add(numTriangles++);
-                        triangles.Add(numTriangles);   
+                        triangles.Add(numTriangles);
                     }
                 }
             }
         }
-
+        
         if (greedyMeshing)
         {
             for (int x = 0; x < chunkSize.x; x++)
@@ -161,8 +169,8 @@ public static class MarchingSquares
                         continue;
                     }
 
-                    int height = 0;
                     // 높이 계산
+                    int height = 0;
                     for (int dy = gridPosition.y; dy < chunkSize.y; dy++)
                     {
                         Vector2Int subGridPosition = new Vector2Int(gridPosition.x, dy);
@@ -174,6 +182,7 @@ public static class MarchingSquares
                         height++;
                     }
                     
+                    // 넓이 계산
                     int width = 1;
                     bool done = false;
                     for (int dx = gridPosition.x + 1; dx < chunkSize.x; dx++)
@@ -280,6 +289,7 @@ public static class MarchingSquares
         }
         else
         {
+            // 앞서 추가하지 않은 꽉찬 사각형(1111) 추가
             foreach (Vector3[] quad in quadTriangles.Values)
             {
                 if (triangleIndexing)
@@ -308,7 +318,7 @@ public static class MarchingSquares
                     triangles.Add(numTriangle++);
                     triangles.Add(numTriangle++);
                     triangles.Add(numTriangle++);
-                    triangles.Add(numTriangle);   
+                    triangles.Add(numTriangle);
                 }
             }   
         }
@@ -338,11 +348,11 @@ public static class MarchingSquares
 
     /*
      *    0        1
-     *    ┌────────┐
-     *    │        │
-     *    │        │ 
-     *    │        │        
-     *    └────────┘        
+     *    ┌─────────┐
+     *    │    4    │        0~3 : 모서리
+     *    │7       5│        4~7 : 변
+     *    │    6    │        
+     *    └─────────┘        
      *    3        2
      */
     public static Vector2Int[] CornerTable =
