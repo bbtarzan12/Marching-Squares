@@ -17,7 +17,7 @@ public static class MarchingSquares
             {
                 float[] densities = new float[4];
 
-                // 사각형의 각 정점 순회하면서 Density를 받아온다
+                // 사각형의 각 꼭짓점을 순회하면서 Density를 받아온다
                 for (int i = 0; i < 4; i++)
                 {
                     densities[i] = voxels[x + CornerTable[i].x, y + CornerTable[i].y].Density;
@@ -47,13 +47,14 @@ public static class MarchingSquares
                 
                 // 교차하는 변의 교차점 보간하여 찾기
                 Vector2[] interpolatedPoints = new Vector2[4];
-                for (int i = 0; i < 4; i++)
+                for (int i = 0; i < 4; i++) // 각 변을 순회
                 {
-                    if ((edgeBits & (1 << (3 - i))) != 0)
+                    if ((edgeBits & (1 << (3 - i))) != 0) // 만약 변이 교차되었다면
                     {
                         Vector2 edge0 = (gridPosition + CornerTable[CornerofEdgeTable[i, 0]]);
                         Vector2 edge1 = (gridPosition + CornerTable[CornerofEdgeTable[i, 1]]);
-                        if (interpolate)
+
+                        if (interpolate) // 보간을 사용하는가?
                         {
                             float v0 = densities[CornerofEdgeTable[i, 0]];
                             float v1 = densities[CornerofEdgeTable[i, 1]];
@@ -61,7 +62,7 @@ public static class MarchingSquares
                         }
                         else
                         {
-                            interpolatedPoints[i] = (edge0 + edge1) / 2.0f;
+                            interpolatedPoints[i] = (edge0 + edge1) / 2.0f; // 변의 중심점 사용
                         }
                     }
                 }
@@ -393,6 +394,7 @@ public static class MarchingSquares
 
     public static int[,] TriangleTable =
     {
+    //  0~3 : 사각형의 꼭짓점, 4~7 : 변의 보간된 점 // intersectionBits
         {-1, -1, -1, -1, -1, -1, -1, -1, -1},     // 0000
         {3, 7, 6, -1, -1, -1, -1, -1, -1},        // 0001
         {2, 6, 5, -1, -1, -1, -1, -1, -1},        // 0010
