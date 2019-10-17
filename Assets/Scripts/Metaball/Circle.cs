@@ -23,8 +23,8 @@ public class Circle : MonoBehaviour
     void Start()
     {
         rigidBody.velocity = Random.insideUnitCircle.normalized;
-        speed = Random.Range(4.0f, 10.0f);
-        radius = Random.Range(5.0f, 10.0f);
+        speed = Random.Range(10.0f, 20.0f);
+        radius = Random.Range(10.0f, 20.0f);
         
         circleCollider.radius = radius;
     }

@@ -1,5 +1,9 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using Unity.Burst;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
+using Unity.Jobs;
 using UnityEngine;
 
 [RequireComponent(typeof(MeshRenderer))]
@@ -9,29 +13,24 @@ public class MetaballGenerator : MonoBehaviour
 {
 
     [SerializeField] Vector2Int chunkSize = new Vector2Int(75, 40);
-    [SerializeField] Vector2 chunkScale = new Vector2(1f, 1f);
     [SerializeField] Material material;
     [SerializeField] int numCircles = 5;
+    [SerializeField] Vector2 chunkScale = new Vector2(1f, 1f);
 
-    Vector2Int gridSize => chunkSize + Vector2Int.one;
-    
+    Vector2Int gridSize;
+
     Circle[] circles;
-    Voxel[,] voxels;
 
     // Mesh
     Mesh mesh;
     MeshFilter meshFilter;
     MeshRenderer meshRenderer;
-    
-    // For Avoid GC
-    List<Vector3> verticies = new List<Vector3>();
-    List<int> triangles = new List<int>();
 
     EdgeCollider2D edgeCollider;
     
     void Awake()
     {
-        voxels = new Voxel[gridSize.x, gridSize.y];
+        gridSize = chunkSize + Vector2Int.one;
         
         meshFilter = GetComponent<MeshFilter>();
         meshRenderer = GetComponent<MeshRenderer>();
@@ -61,33 +60,73 @@ public class MetaballGenerator : MonoBehaviour
         edgeCollider.edgeRadius = 1.0f;
     }
 
-    void Update()
+    
+    [BurstCompile]
+    struct MetaballDensityJob : IJobParallelFor
     {
-        for (int x = 0; x < chunkSize.x; x++)
+        [ReadOnly] public Vector2Int gridSize;
+        [ReadOnly] public NativeArray<float> radiuses;
+        [ReadOnly] public NativeArray<Vector3> positions;
+        [ReadOnly] public int numCircles;
+        
+        [WriteOnly] public NativeArray<Voxel> voxels;
+        
+        public void Execute(int index)
         {
-            for (int y = 0; y < chunkSize.y; y++)
+            int x = index % gridSize.x;
+            int y = index / gridSize.x;
+            
+            float density = -1.0f;
+            Vector2Int gridPosition = new Vector2Int(x, y);
+
+            for (int i = 0; i < numCircles; i++)
             {
-                float density = -1.0f;
-                Vector2Int gridPosition = new Vector2Int(x, y);
-
-                foreach (Circle circle in circles)
-                {
-                    float distance = Vector2.Distance(circle.transform.position, gridPosition);
-                    density += Mathf.Clamp(circle.Radius - distance, 0, float.MaxValue);
-                }
-
-                voxels[x, y].Density = density;
+                float distance = Vector2.Distance(positions[i], gridPosition);
+                density += Mathf.Max(0, radiuses[i] - distance);
             }
+
+            Voxel voxel = new Voxel {Density = density};
+            voxels[index] = voxel;
         }
+    }
+    
+    unsafe void Update()
+    {
+        int arraySize = gridSize.x * gridSize.y;
         
-        verticies.Clear();
-        triangles.Clear();
-        
-        MarchingSquares.GenerateMarchingSquares(voxels, chunkSize, chunkScale, true, true, false, ref verticies, ref triangles);
+        NativeArray<Vector3> nativePositions = new NativeArray<Vector3>(circles.Length, Allocator.TempJob);
+        NativeArray<float> nativeRadiuses = new NativeArray<float>(circles.Length, Allocator.TempJob);
+        NativeArray<Voxel> nativeVoxels = new NativeArray<Voxel>(arraySize, Allocator.TempJob);
+
+        for (int i = 0; i < circles.Length; i++)
+        {
+            UnsafeUtility.WriteArrayElement(nativeRadiuses.GetUnsafePtr(), i, circles[i].Radius);
+            UnsafeUtility.WriteArrayElement(nativePositions.GetUnsafePtr(), i, circles[i].transform.position);
+        }
+
+        MetaballDensityJob job = new MetaballDensityJob
+        {
+            voxels = nativeVoxels,
+            gridSize = gridSize,
+            positions = nativePositions,
+            radiuses = nativeRadiuses,
+            numCircles = circles.Length
+        };
+
+        JobHandle handle = job.Schedule(arraySize, 32);
+        handle.Complete();
+
+        MarchingSquares.GenerateMarchingSquaresWithJob(nativeVoxels, chunkSize, chunkScale, true, true, false, out Vector3[] verticies, out int[] triangles);
         
         mesh.Clear();
-        mesh.SetVertices(verticies);
+        mesh.vertices = verticies;
         mesh.SetTriangles(triangles, 0);
+
+        nativePositions.Dispose();
+        nativeRadiuses.Dispose();
+        nativeVoxels.Dispose();
     }
 
 }
+
+

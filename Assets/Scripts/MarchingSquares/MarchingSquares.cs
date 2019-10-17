@@ -1,11 +1,173 @@
 ﻿
-using System.Collections;
+using System;
 using System.Collections.Generic;
-using System.Linq;
+using Unity.Burst;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
+using Unity.Jobs;
 using UnityEngine;
 
 public static class MarchingSquares
 {
+    static unsafe void CopyToFast<T>(this NativeSlice<T> nativeSlice, T[] array) where T : struct {
+        int byteLength = nativeSlice.Length * UnsafeUtility.SizeOf(typeof(T));
+        void* managedBuffer = UnsafeUtility.AddressOf(ref array[0]);
+        void* nativeBuffer = nativeSlice.GetUnsafePtr();
+        UnsafeUtility.MemCpy(managedBuffer, nativeBuffer, byteLength);
+    }
+
+    [BurstCompile]
+    struct MarchingSquaresJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray<Voxel> voxels;
+
+        [ReadOnly] public Vector2Int chunkSize;
+        [ReadOnly] public Vector2 chunkScale;
+        [ReadOnly] public bool interpolate;
+        [ReadOnly] public bool triangleIndexing;
+        [ReadOnly] public bool greedyMeshing;
+
+
+        [NativeDisableParallelForRestriction] [WriteOnly] public NativeArray<Vector3> vertices;
+        [NativeDisableParallelForRestriction] [WriteOnly] public NativeArray<int> triangles;
+        [WriteOnly] public NativeCounter.Concurrent counter;
+        
+        public unsafe void Execute(int idx)
+        {
+            int x = idx % chunkSize.x;
+            int y = idx / chunkSize.x;
+
+            float* densities = stackalloc float[4];
+
+            // 사각형의 각 꼭짓점을 순회하면서 Density를 받아온다
+            for (int i = 0; i < 4; i++)
+            {
+                densities[i] = voxels[(x + CornerTable[i].x) + (y + CornerTable[i].y) * (chunkSize.x + 1)].Density;
+            }
+
+            Vector2Int gridPosition = new Vector2Int(x, y);
+
+            // 교차하는 지점을 찾는다
+            // IsoLevel은 0이라고 가정
+            int intersectionBits = 0;
+            for (int i = 0; i < 4; i++)
+            {
+                if (densities[i] > 0)
+                {
+                    intersectionBits |= 1 << (3 - i);
+                }
+            }
+
+            // 교차하는 지점이 없다면 끝낸다.
+            if (intersectionBits == 0)
+            {
+                return;
+            }
+
+
+            // 교차하는 변 찾기
+            int edgeBits = EdgeTable[intersectionBits];
+
+
+            // 교차하는 변의 교차점 보간하여 찾기
+            Vector2* interpolatedPoints = stackalloc Vector2[4];
+            for (int i = 0; i < 4; i++) // 각 변을 순회
+            {
+                if ((edgeBits & (1 << (3 - i))) != 0) // 만약 변이 교차되었다면
+                {
+                    Vector2 edge0 = (gridPosition + CornerTable[CornerofEdgeTable[i].x]);
+                    Vector2 edge1 = (gridPosition + CornerTable[CornerofEdgeTable[i].y]);
+
+                    if (interpolate) // 보간을 사용하는가?
+                    {
+                        float v0 = densities[CornerofEdgeTable[i].x];
+                        float v1 = densities[CornerofEdgeTable[i].y];
+                        interpolatedPoints[i] = VectorInterp(edge0, edge1, v0, v1);
+                    }
+                    else
+                    {
+                        interpolatedPoints[i] = (edge0 + edge1) / 2.0f; // 변의 중심점 사용
+                    }
+                }
+            }
+
+            // 모서리와 변의 교차점을 합친 배열
+            Vector2* finalPoints = stackalloc Vector2[8];
+            for (int i = 0; i < 4; i++)
+            {
+                finalPoints[i] = gridPosition + CornerTable[i];
+            }
+
+            for (int i = 4; i < 8; i++)
+            {
+                finalPoints[i] = interpolatedPoints[i - 4];
+            }
+
+            // 삼각형 만들기
+            for (int i = 0; i < 9; i += 3)
+            {
+                int index0 = TriangleTable[intersectionBits][i];
+                int index1 = TriangleTable[intersectionBits][i + 1];
+                int index2 = TriangleTable[intersectionBits][i + 2];
+
+                if (index0 == -1 || index1 == -1 || index2 == -1)
+                    break;
+
+                Vector3 vertex0 = finalPoints[index0] * chunkScale;
+                Vector3 vertex1 = finalPoints[index1] * chunkScale;
+                Vector3 vertex2 = finalPoints[index2] * chunkScale;
+
+                int triangleIndex = counter.Increment() * 3;
+                vertices[triangleIndex] = vertex0;
+                vertices[triangleIndex + 1] = vertex1;
+                vertices[triangleIndex + 2] = vertex2;
+                
+                triangles[triangleIndex] = triangleIndex;
+                triangles[triangleIndex + 1] = triangleIndex + 1;
+                triangles[triangleIndex + 2] = triangleIndex + 2;
+            }
+            
+        }
+    }
+    
+    public static void GenerateMarchingSquaresWithJob(NativeArray<Voxel> nativeVoxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, out Vector3[] verticies, out int[] triangles)
+    {
+        NativeArray<Vector3> nativeVertices = new NativeArray<Vector3>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
+        NativeArray<int> nativeTriangles = new NativeArray<int>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
+        NativeCounter counter = new NativeCounter(Allocator.TempJob);
+        
+        MarchingSquaresJob job = new MarchingSquaresJob
+        {
+            vertices = nativeVertices,
+            triangles = nativeTriangles,
+            counter = counter.ToConcurrent(),
+            voxels = nativeVoxels,
+            chunkSize = chunkSize,
+            chunkScale = chunkScale,
+            interpolate = interpolate,
+            triangleIndexing = triangleIndexing,
+            greedyMeshing = greedyMeshing
+        };
+        
+        JobHandle jobHandle = job.Schedule(chunkSize.x * chunkSize.y, 32);
+        jobHandle.Complete();
+
+        int arraySize = counter.Count * 3;
+
+        verticies = new Vector3[arraySize];
+        triangles = new int[arraySize];
+        
+        NativeSlice<Vector3> nativeSliceVertices = new NativeSlice<Vector3>(nativeVertices, 0, arraySize);
+        NativeSlice<int> nativeSliceTriangles = new NativeSlice<int>(nativeTriangles, 0, arraySize);
+
+        nativeSliceVertices.CopyToFast(verticies);
+        nativeSliceTriangles.CopyToFast(triangles);
+
+        counter.Dispose();
+        nativeVertices.Dispose();
+        nativeTriangles.Dispose();
+    }
+    
     public static void GenerateMarchingSquares(Voxel[,] voxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, ref List<Vector3> verticies, ref List<int> triangles)
     {
         Dictionary<Vector3, int> points = new Dictionary<Vector3, int>();
@@ -51,13 +213,13 @@ public static class MarchingSquares
                 {
                     if ((edgeBits & (1 << (3 - i))) != 0) // 만약 변이 교차되었다면
                     {
-                        Vector2 edge0 = (gridPosition + CornerTable[CornerofEdgeTable[i, 0]]);
-                        Vector2 edge1 = (gridPosition + CornerTable[CornerofEdgeTable[i, 1]]);
+                        Vector2 edge0 = (gridPosition + CornerTable[CornerofEdgeTable[i].x]);
+                        Vector2 edge1 = (gridPosition + CornerTable[CornerofEdgeTable[i].y]);
 
                         if (interpolate) // 보간을 사용하는가?
                         {
-                            float v0 = densities[CornerofEdgeTable[i, 0]];
-                            float v1 = densities[CornerofEdgeTable[i, 1]];
+                            float v0 = densities[CornerofEdgeTable[i].x];
+                            float v1 = densities[CornerofEdgeTable[i].y];
                             interpolatedPoints[i] = VectorInterp(edge0, edge1, v0, v1);   
                         }
                         else
@@ -87,9 +249,9 @@ public static class MarchingSquares
                 // 삼각형 만들기
                 for (int i = 0; i < 9; i += 3)
                 {
-                    int index0 = TriangleTable[intersectionBits, i];
-                    int index1 = TriangleTable[intersectionBits, i + 1];
-                    int index2 = TriangleTable[intersectionBits, i + 2];
+                    int index0 = TriangleTable[intersectionBits][i];
+                    int index1 = TriangleTable[intersectionBits][i + 1];
+                    int index2 = TriangleTable[intersectionBits][i + 2];
                     
                     if(index0 == -1 || index1 == -1 || index2 == -1)
                         break;
@@ -217,7 +379,7 @@ public static class MarchingSquares
                     
                     // width height 만큼 mesh 만들기
                     Vector2Int size = new Vector2Int(width, height);
-                    Vector3[] quad = new Vector3[4]
+                    Vector3[] quad = new Vector3[]
                     {
                         (gridPosition + CornerTable[0] * size) * chunkScale,
                         (gridPosition + CornerTable[1] * size) * chunkScale,
@@ -227,9 +389,9 @@ public static class MarchingSquares
 
                     for (int i = 0; i < 6; i+=3)
                     {
-                        int index0 = TriangleTable[15, i];
-                        int index1 = TriangleTable[15, i + 1];
-                        int index2 = TriangleTable[15, i + 2];
+                        int index0 = TriangleTable[15][i];
+                        int index1 = TriangleTable[15][i + 1];
+                        int index2 = TriangleTable[15][i + 2];
 
                         Vector3 vertex0 = quad[index0];
                         Vector3 vertex1 = quad[index1];
@@ -356,7 +518,7 @@ public static class MarchingSquares
      *    └─────────┘        
      *    3        2
      */
-    public static Vector2Int[] CornerTable =
+    public static readonly Vector2Int[] CornerTable =
     {
         new Vector2Int(0, 1), 
         new Vector2Int(1, 1),
@@ -364,15 +526,15 @@ public static class MarchingSquares
         new Vector2Int(0, 0),
     };
 
-    public static int[,] CornerofEdgeTable =
+    public static readonly Vector2Int[] CornerofEdgeTable =
     {
-        {0, 1},
-        {1, 2},
-        {2, 3},
-        {3, 0}
+        new Vector2Int(0, 1),
+        new Vector2Int(1, 2),
+        new Vector2Int(2, 3),
+        new Vector2Int(3, 0)
     };
 
-    public static int[] EdgeTable =
+    public static readonly int[] EdgeTable =
     {
         0,    //{0, 0, 0, 0},    // 0000
         3,    //{0, 0, 1, 1},    // 0001
@@ -392,24 +554,70 @@ public static class MarchingSquares
         0,    //{0, 0, 0, 0},    // 1111
     };
 
-    public static int[,] TriangleTable =
+    public static readonly TriangleTableEntry[] TriangleTable =
     {
     //  0~3 : 사각형의 꼭짓점, 4~7 : 변의 보간된 점 // intersectionBits
-        {-1, -1, -1, -1, -1, -1, -1, -1, -1},     // 0000
-        {3, 7, 6, -1, -1, -1, -1, -1, -1},        // 0001
-        {2, 6, 5, -1, -1, -1, -1, -1, -1},        // 0010
-        {3, 7, 5, 3, 5, 2, -1, -1, -1},           // 0011
-        {4, 1, 5, -1, -1, -1, -1, -1, -1},        // 0100
-        {4, 1, 5, 3, 7, 6, -1, -1, -1},           // 0101
-        {6, 4, 1, 6, 1, 2, -1, -1, -1},           // 0110
-        {2, 3, 7, 2, 7, 4, 2, 4, 1},              // 0111
-        {7, 0, 4, -1, -1, -1, -1, -1, -1},        // 1000
-        {3, 0, 4, 3, 4, 6, -1, -1, -1},           // 1001
-        {7, 0, 4, 2, 6, 5, -1, -1, -1},           // 1010
-        {3, 0, 4, 3, 4, 5, 3, 5, 2},              // 1011
-        {7, 0, 1, 7, 1, 5, -1, -1, -1},           // 1100
-        {0, 1, 5, 0, 5, 6, 0, 6, 3},              // 1101
-        {1, 2, 6, 1, 6, 7, 1, 7, 0},              // 1110
-        {3, 0, 2, 2, 0, 1, -1, -1, -1}            // 1111
+        new TriangleTableEntry(-1, -1, -1, -1, -1, -1, -1, -1, -1),     // 0000
+        new TriangleTableEntry(3, 7, 6, -1, -1, -1, -1, -1, -1),        // 0001
+        new TriangleTableEntry(2, 6, 5, -1, -1, -1, -1, -1, -1),        // 0010
+        new TriangleTableEntry(3, 7, 5, 3, 5, 2, -1, -1, -1),           // 0011
+        new TriangleTableEntry(4, 1, 5, -1, -1, -1, -1, -1, -1),        // 0100
+        new TriangleTableEntry(4, 1, 5, 3, 7, 6, -1, -1, -1),           // 0101
+        new TriangleTableEntry(6, 4, 1, 6, 1, 2, -1, -1, -1),           // 0110
+        new TriangleTableEntry(2, 3, 7, 2, 7, 4, 2, 4, 1),              // 0111
+        new TriangleTableEntry(7, 0, 4, -1, -1, -1, -1, -1, -1),        // 1000
+        new TriangleTableEntry(3, 0, 4, 3, 4, 6, -1, -1, -1),           // 1001
+        new TriangleTableEntry(7, 0, 4, 2, 6, 5, -1, -1, -1),           // 1010
+        new TriangleTableEntry(3, 0, 4, 3, 4, 5, 3, 5, 2),              // 1011
+        new TriangleTableEntry(7, 0, 1, 7, 1, 5, -1, -1, -1),           // 1100
+        new TriangleTableEntry(0, 1, 5, 0, 5, 6, 0, 6, 3),              // 1101
+        new TriangleTableEntry(1, 2, 6, 1, 6, 7, 1, 7, 0),              // 1110
+        new TriangleTableEntry(3, 0, 2, 2, 0, 1, -1, -1, -1)            // 1111
     };
+    
+    public struct TriangleTableEntry
+    {
+        public TriangleTableEntry(int value0, int value1, int value2, int value3, int value4, int value5, int value6, int value7, int value8)
+        {
+            this.value0 = value0;
+            this.value1 = value1;
+            this.value2 = value2;
+            this.value3 = value3;
+            this.value4 = value4;
+            this.value5 = value5;
+            this.value6 = value6;
+            this.value7 = value7;
+            this.value8 = value8;
+        }
+
+        public int this[int key]
+        {
+            get
+            {
+                switch (key)
+                {
+                    case 0: return value0;
+                    case 1: return value1;
+                    case 2: return value2;
+                    case 3: return value3;
+                    case 4: return value4;
+                    case 5: return value5;
+                    case 6: return value6;
+                    case 7: return value7;
+                    case 8: return value8;
+                    default: return -1;
+                }
+            }
+        }
+        
+        int value0;
+        int value1;
+        int value2;
+        int value3;
+        int value4;
+        int value5;
+        int value6;
+        int value7;
+        int value8;
+    }
 }

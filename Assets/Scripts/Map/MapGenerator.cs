@@ -1,7 +1,10 @@
 using System;
 using System.Collections.Generic;
-using UnityEditor;
 using UnityEngine;
+
+#if UNITY_EDITOR
+using UnityEditor;
+#endif
 
 public class MapGenerator : MonoBehaviour
 {
@@ -285,6 +288,9 @@ public class MapGenerator : MonoBehaviour
         Vector3 worldPosition = Camera.main.ScreenToWorldPoint(Input.mousePosition);
         Vector2Int gridPosition = WorldToGrid(worldPosition);
         Gizmos.DrawSphere(GridToWorld(gridPosition), 0.1f);
+        
+        #if UNITY_EDITOR
         Handles.Label(GridToWorld(gridPosition) + Vector3.up * 0.25f, gridPosition.ToString());
+        #endif
     }
 }

@@ -173,7 +173,7 @@ Camera:
   far clip plane: 1000
   field of view: 60
   orthographic: 1
-  orthographic size: 18.760849
+  orthographic size: 18.76085
   m_Depth: -1
   m_CullingMask:
     serializedVersion: 2
@@ -235,10 +235,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 99c31827eafdd46418cfb0b83c96fed3, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  chunkSize: {x: 72, y: 40}
-  chunkScale: {x: 1, y: 1}
+  chunkSize: {x: 288, y: 160}
   material: {fileID: 2100000, guid: f4ae1cbc5c6209646895f89fb65e523b, type: 2}
-  numCircles: 6
+  numCircles: 10
+  chunkScale: {x: 0.25, y: 0.25}
 --- !u!68 &1399559808
 EdgeCollider2D:
   m_ObjectHideFlags: 0

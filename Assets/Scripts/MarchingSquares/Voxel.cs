@@ -8,6 +8,6 @@ public struct Voxel
     public float Density
     {
         get => density;
-        set => density = Mathf.Clamp(value, -1f, 1f);
+        set => density = value; //= Mathf.Clamp(value, -1f, 1f);
     }
 }
