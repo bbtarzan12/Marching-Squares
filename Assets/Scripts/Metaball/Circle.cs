@@ -10,7 +10,9 @@ public class Circle : MonoBehaviour
     float radius;
     
     public float Radius => radius;
-    
+
+    const string BoundTag = "CircleBound";
+
     void Awake()
     {
         circleCollider = GetComponent<CircleCollider2D>();
@@ -36,7 +38,7 @@ public class Circle : MonoBehaviour
 
     void OnCollisionEnter2D(Collision2D other)
     {
-        if (other.gameObject.CompareTag("CircleBound"))
+        if (other.gameObject.CompareTag(BoundTag))
         {
             rigidBody.velocity = Vector2.Reflect(rigidBody.velocity, other.GetContact(0).normal);
         }

@@ -25,6 +25,10 @@ public class MetaballGenerator : MonoBehaviour
     Mesh mesh;
     MeshFilter meshFilter;
     MeshRenderer meshRenderer;
+    
+    // For Avoid GC
+    List<Vector3> vertices = new List<Vector3>();
+    List<int> triangles = new List<int>();
 
     EdgeCollider2D edgeCollider;
     
@@ -115,13 +119,13 @@ public class MetaballGenerator : MonoBehaviour
 
         JobHandle handle = job.Schedule(arraySize, 32);
         handle.Complete();
-
-        MarchingSquares.GenerateMarchingSquaresWithJob(nativeVoxels, chunkSize, chunkScale, true, true, false, out Vector3[] verticies, out int[] triangles);
+        
+        MarchingSquares.GenerateMarchingSquaresWithJob(nativeVoxels, chunkSize, chunkScale, true, true, false, ref vertices, ref triangles);
         
         mesh.Clear();
-        mesh.vertices = verticies;
+        mesh.SetVertices(vertices);
         mesh.SetTriangles(triangles, 0);
-
+        
         nativePositions.Dispose();
         nativeRadiuses.Dispose();
         nativeVoxels.Dispose();

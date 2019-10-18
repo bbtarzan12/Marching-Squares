@@ -15,6 +15,36 @@ public static class MarchingSquares
         void* nativeBuffer = nativeSlice.GetUnsafePtr();
         UnsafeUtility.MemCpy(managedBuffer, nativeBuffer, byteLength);
     }
+    
+    static unsafe void NativeAddRange<T>(this List<T> list, NativeSlice<T> nativeSlice)
+        where T : struct
+    {
+        NativeAddRange(list, nativeSlice.GetUnsafePtr(), nativeSlice.Length);
+    }
+ 
+    static unsafe void NativeAddRange<T>(List<T> list, void* arrayBuffer, int length)
+        where T : struct
+    {
+        var index = list.Count;
+        var newLength = index + length;
+ 
+        // Resize our list if we require
+        if (list.Capacity < newLength)
+        {
+            list.Capacity = newLength;
+        }
+ 
+        var items = NoAllocHelpers.ExtractArrayFromListT(list);
+        var size = UnsafeUtility.SizeOf<T>();
+ 
+        // Get the pointer to the end of the list
+        var bufferStart = (IntPtr) UnsafeUtility.AddressOf(ref items[0]);
+        var buffer = (byte*)(bufferStart + (size * index));
+ 
+        UnsafeUtility.MemCpy(buffer, arrayBuffer, length * (long) size);
+ 
+        NoAllocHelpers.ResizeList(list, newLength);
+    }
 
     [BurstCompile]
     struct MarchingSquaresJob : IJobParallelFor
@@ -130,7 +160,7 @@ public static class MarchingSquares
         }
     }
     
-    public static void GenerateMarchingSquaresWithJob(NativeArray<Voxel> nativeVoxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, out Vector3[] verticies, out int[] triangles)
+    public static unsafe void GenerateMarchingSquaresWithJob(NativeArray<Voxel> nativeVoxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, ref List<Vector3> vertices, ref List<int> triangles)
     {
         NativeArray<Vector3> nativeVertices = new NativeArray<Vector3>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
         NativeArray<int> nativeTriangles = new NativeArray<int>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
@@ -153,15 +183,15 @@ public static class MarchingSquares
         jobHandle.Complete();
 
         int arraySize = counter.Count * 3;
-
-        verticies = new Vector3[arraySize];
-        triangles = new int[arraySize];
         
         NativeSlice<Vector3> nativeSliceVertices = new NativeSlice<Vector3>(nativeVertices, 0, arraySize);
         NativeSlice<int> nativeSliceTriangles = new NativeSlice<int>(nativeTriangles, 0, arraySize);
 
-        nativeSliceVertices.CopyToFast(verticies);
-        nativeSliceTriangles.CopyToFast(triangles);
+        vertices.Clear();
+        triangles.Clear();
+        
+        vertices.NativeAddRange(nativeSliceVertices);
+        triangles.NativeAddRange(nativeSliceTriangles);
 
         counter.Dispose();
         nativeVertices.Dispose();
