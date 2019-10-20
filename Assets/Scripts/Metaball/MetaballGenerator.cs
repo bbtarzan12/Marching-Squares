@@ -175,7 +175,7 @@ public class MetaballGenerator : MonoBehaviour
         JobHandle handle = job.Schedule(arraySize, 32);
         handle.Complete();
         
-        MarchingSquares.GenerateMarchingSquaresWithJob(nativeVoxels, chunkSize, chunkScale, enableInterpolation, enableTriangleIndexing, enableGreedyMeshing, ref vertices, ref triangles);
+        MarchingSquares.GenerateMarchingSquaresWithJob(nativeVoxels, chunkSize, chunkScale, enableInterpolation, enableTriangleIndexing, enableGreedyMeshing, vertices, triangles);
         
         mesh.Clear();
         mesh.SetVertices(vertices);
@@ -204,8 +204,8 @@ public class MetaballGenerator : MonoBehaviour
                 voxels[x, y].Density = density;
             }
         }
-
-        MarchingSquares.GenerateMarchingSquares(voxels, chunkSize, chunkScale, enableInterpolation, enableTriangleIndexing, enableGreedyMeshing, ref vertices, ref triangles);
+        
+        MarchingSquares.GenerateMarchingSquares(voxels, chunkSize, chunkScale, enableInterpolation, enableTriangleIndexing, enableGreedyMeshing, vertices, triangles);
         
         mesh.Clear();
         mesh.SetVertices(vertices);

@@ -199,7 +199,7 @@ public static class MarchingSquares
         }
     }
 
-    public static void GenerateMarchingSquaresWithJob(NativeArray<Voxel> nativeVoxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, ref List<Vector3> vertices, ref List<int> triangles)
+    public static void GenerateMarchingSquaresWithJob(NativeArray<Voxel> nativeVoxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, List<Vector3> vertices, List<int> triangles)
     {
         NativeArray<Vector3> nativeVertices = new NativeArray<Vector3>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
         NativeArray<int> nativeTriangles = new NativeArray<int>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
@@ -275,7 +275,7 @@ public static class MarchingSquares
         nativeTriangles.Dispose();
     }
 
-    static void GreedyMeshingForJob(Vector2Int chunkSize, Vector2 chunkScale, NativeArray<Vector3> vertices, NativeCounter counter, NativeArray<bool> quadSet)
+    static unsafe void GreedyMeshingForJob(Vector2Int chunkSize, Vector2 chunkScale, NativeArray<Vector3> vertices, NativeCounter counter, NativeArray<bool> quadSet)
     {
         for (int x = 0; x < chunkSize.x; x++)
         {
@@ -336,7 +336,7 @@ public static class MarchingSquares
 
                 // width height 만큼 mesh 만들기
                 Vector2Int size = new Vector2Int(width, height);
-                Vector3[] quad =  {(gridPosition + CornerTable[0] * size) * chunkScale, (gridPosition + CornerTable[1] * size) * chunkScale, (gridPosition + CornerTable[2] * size) * chunkScale, (gridPosition + CornerTable[3] * size) * chunkScale};
+                Vector2* quad = stackalloc[] {(gridPosition + CornerTable[0] * size) * chunkScale, (gridPosition + CornerTable[1] * size) * chunkScale, (gridPosition + CornerTable[2] * size) * chunkScale, (gridPosition + CornerTable[3] * size) * chunkScale};
 
                 for (int i = 0; i < 6; i += 3)
                 {
@@ -390,9 +390,9 @@ public static class MarchingSquares
 
     // For avoid GC
     static Dictionary<Vector3, int> points;
-    static Dictionary<Vector2Int, Vector3[]> quadTriangles;
+    static bool[,] quadMap;
 
-    public static void GenerateMarchingSquares(Voxel[,] voxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, ref List<Vector3> vertices, ref List<int> triangles)
+    public static unsafe void GenerateMarchingSquares(Voxel[,] voxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, List<Vector3> vertices, List<int> triangles)
     {
         vertices.Clear();
         triangles.Clear();
@@ -403,20 +403,22 @@ public static class MarchingSquares
             points = new Dictionary<Vector3, int>();
         }
 
-        if (quadTriangles == null)
+        if (quadMap == null)
         {
-            quadTriangles = new Dictionary<Vector2Int, Vector3[]>();
+            quadMap = new bool[voxels.GetLength(0), voxels.GetLength(1)];
         }
         
         points.Clear();
-        quadTriangles.Clear();
+
+        // For avoid GC
+        float* densities = stackalloc float[4];
+        Vector2* interpolatedPoints = stackalloc Vector2[4];
+        Vector2* finalPoints = stackalloc Vector2[8];
 
         for (int x = 0; x < chunkSize.x; x++)
         {
             for (int y = 0; y < chunkSize.y; y++)
             {
-                float[] densities = new float[4];
-
                 // 사각형의 각 꼭짓점을 순회하면서 Density를 받아온다
                 for (int i = 0; i < 4; i++)
                 {
@@ -437,14 +439,16 @@ public static class MarchingSquares
                 }
                 
                 // 교차하는 지점이 없다면 끝낸다.
-                if(intersectionBits == 0)
+                if (intersectionBits == 0)
+                {
+                    quadMap[x, y] = false;
                     continue;
-                
+                }
+
                 // 교차하는 변 찾기
                 int edgeBits = EdgeTable[intersectionBits];
                 
                 // 교차하는 변의 교차점 보간하여 찾기
-                Vector2[] interpolatedPoints = new Vector2[4];
                 for (int i = 0; i < 4; i++) // 각 변을 순회
                 {
                     if ((edgeBits & (1 << (3 - i))) != 0) // 만약 변이 교차되었다면
@@ -466,7 +470,6 @@ public static class MarchingSquares
                 }
                 
                 // 모서리와 변의 교차점을 합친 배열
-                Vector2[] finalPoints = new Vector2[8];
                 for (int i = 0; i < 4; i++)
                 {
                     finalPoints[i] = gridPosition + CornerTable[i];
@@ -479,77 +482,72 @@ public static class MarchingSquares
 
                 if (intersectionBits == 15 && (triangleIndexing || greedyMeshing))
                 {
-                    quadTriangles.Add(gridPosition, new Vector3[6]);
+                    quadMap[x, y] = true;
                 }
-
-                // 삼각형 만들기
-                for (int i = 0; i < 9; i += 3)
+                else
                 {
-                    int index0 = TriangleTable[intersectionBits][i];
-                    int index1 = TriangleTable[intersectionBits][i + 1];
-                    int index2 = TriangleTable[intersectionBits][i + 2];
+                    quadMap[x, y] = false;
                     
-                    if(index0 == -1 || index1 == -1 || index2 == -1)
-                        break;
+                    // 삼각형 만들기
+                    for (int i = 0; i < 9; i += 3)
+                    {
+                        int index0 = TriangleTable[intersectionBits][i];
+                        int index1 = TriangleTable[intersectionBits][i + 1];
+                        int index2 = TriangleTable[intersectionBits][i + 2];
 
-                    Vector3 vertex0 = finalPoints[index0] * chunkScale;
-                    Vector3 vertex1 = finalPoints[index1] * chunkScale;
-                    Vector3 vertex2 = finalPoints[index2] * chunkScale;
-                    
-                    // 꽉찬 사각형은 나중에 쓸일이 따로 있으므로 따로 추가하고 넘긴다
-                    if (intersectionBits == 15 && (triangleIndexing || greedyMeshing))
-                    {
-                        quadTriangles[gridPosition][i] = vertex0;
-                        quadTriangles[gridPosition][i + 1] = vertex1;
-                        quadTriangles[gridPosition][i + 2] = vertex2;
-                        continue;
-                    }
-                    
-                    if (triangleIndexing)
-                    {
-                        if (points.ContainsKey(vertex0))
-                        {
-                            triangles.Add(points[vertex0]);
-                        }
-                        else
-                        {
-                            int index = points.Count;
-                            points.Add(vertex0, index);
-                            triangles.Add(index);
-                        }
-                        
-                        if (points.ContainsKey(vertex1))
-                        {
-                            triangles.Add(points[vertex1]);
-                        }
-                        else
-                        {
-                            int index = points.Count;
-                            points.Add(vertex1, index);
-                            triangles.Add(index);
-                        }
-                        
-                        if (points.ContainsKey(vertex2))
-                        {
-                            triangles.Add(points[vertex2]);
-                        }
-                        else
-                        {
-                            int index = points.Count;
-                            points.Add(vertex2, index);
-                            triangles.Add(index);
-                        }
-                    }
-                    else
-                    {
-                        vertices.Add(vertex0);
-                        vertices.Add(vertex1);
-                        vertices.Add(vertex2);
+                        if (index0 == -1 || index1 == -1 || index2 == -1)
+                            break;
 
-                        int numTriangles = triangles.Count;
-                        triangles.Add(numTriangles++);
-                        triangles.Add(numTriangles++);
-                        triangles.Add(numTriangles);
+                        Vector3 vertex0 = finalPoints[index0] * chunkScale;
+                        Vector3 vertex1 = finalPoints[index1] * chunkScale;
+                        Vector3 vertex2 = finalPoints[index2] * chunkScale;
+
+                        if (triangleIndexing)
+                        {
+                            if (points.ContainsKey(vertex0))
+                            {
+                                triangles.Add(points[vertex0]);
+                            }
+                            else
+                            {
+                                int index = points.Count;
+                                points.Add(vertex0, index);
+                                triangles.Add(index);
+                            }
+
+                            if (points.ContainsKey(vertex1))
+                            {
+                                triangles.Add(points[vertex1]);
+                            }
+                            else
+                            {
+                                int index = points.Count;
+                                points.Add(vertex1, index);
+                                triangles.Add(index);
+                            }
+
+                            if (points.ContainsKey(vertex2))
+                            {
+                                triangles.Add(points[vertex2]);
+                            }
+                            else
+                            {
+                                int index = points.Count;
+                                points.Add(vertex2, index);
+                                triangles.Add(index);
+                            }
+                        }
+                        else
+                        {
+                            vertices.Add(vertex0);
+                            vertices.Add(vertex1);
+                            vertices.Add(vertex2);
+
+                            int numTriangles = triangles.Count;
+                            triangles.Add(numTriangles++);
+                            triangles.Add(numTriangles++);
+                            triangles.Add(numTriangles);
+                        }
                     }
                 }
             }
@@ -562,7 +560,7 @@ public static class MarchingSquares
                 for (int y = 0; y < chunkSize.y;)
                 {
                     Vector2Int gridPosition = new Vector2Int(x, y);
-                    if (!quadTriangles.ContainsKey(gridPosition))
+                    if (!quadMap[x,y])
                     {
                         y++;
                         continue;
@@ -573,7 +571,7 @@ public static class MarchingSquares
                     for (int dy = gridPosition.y; dy < chunkSize.y; dy++)
                     {
                         Vector2Int subGridPosition = new Vector2Int(gridPosition.x, dy);
-                        if (!quadTriangles.ContainsKey(subGridPosition))
+                        if (!quadMap[subGridPosition.x, subGridPosition.y])
                         {
                             break;
                         }
@@ -589,7 +587,7 @@ public static class MarchingSquares
                         for (int dy = gridPosition.y; dy < gridPosition.y + height && dy < chunkSize.y; dy++)
                         {
                             Vector2Int subGridPosition = new Vector2Int(dx, dy);
-                            if (!quadTriangles.ContainsKey(subGridPosition))
+                            if (!quadMap[subGridPosition.x, subGridPosition.y])
                             {
                                 done = true;
                                 break;
@@ -609,13 +607,13 @@ public static class MarchingSquares
                     {
                         for (int dy = gridPosition.y; dy < gridPosition.y + height; dy++)
                         {
-                            quadTriangles.Remove(new Vector2Int(dx, dy));
+                            quadMap[dx, dy] = false;
                         }
                     }
                     
                     // width height 만큼 mesh 만들기
                     Vector2Int size = new Vector2Int(width, height);
-                    Vector3[] quad = new Vector3[]
+                    Vector3* quad = stackalloc Vector3[]
                     {
                         (gridPosition + CornerTable[0] * size) * chunkScale,
                         (gridPosition + CornerTable[1] * size) * chunkScale,
@@ -689,19 +687,26 @@ public static class MarchingSquares
         else
         {
             // 앞서 추가하지 않은 꽉찬 사각형(1111) 추가
-            foreach (Vector3[] quad in quadTriangles.Values)
+            for (int x = 0; x < quadMap.GetLength(0); x++)
             {
-                foreach (Vector3 vertex in quad)
+                for (int y = 0; y < quadMap.GetLength(1); y++)
                 {
-                    if (points.ContainsKey(vertex))
+                    if(!quadMap[x,y])
+                        continue;
+                    
+                    for (int vertexIndex = 0; vertexIndex < 6; vertexIndex++)
                     {
-                        triangles.Add(points[vertex]);
-                    }
-                    else
-                    {
-                        int index = points.Count;
-                        points.Add(vertex, index);
-                        triangles.Add(index);
+                        Vector3 vertex = new Vector3(CornerTable[TriangleTable[15][vertexIndex]].x + x, CornerTable[TriangleTable[15][vertexIndex]].y + y, 0) * chunkScale;
+                        if (points.ContainsKey(vertex))
+                        {
+                            triangles.Add(points[vertex]);
+                        }
+                        else
+                        {
+                            int index = points.Count;
+                            points.Add(vertex, index);
+                            triangles.Add(index);
+                        }
                     }
                 }
             }

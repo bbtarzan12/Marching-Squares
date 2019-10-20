@@ -119,10 +119,7 @@ public class Chunk : MonoBehaviour
 
     public void UpdateMesh()
     {
-        verticies.Clear();
-        triangles.Clear();
-        
-        MarchingSquares.GenerateMarchingSquares(voxels, chunkSize, chunkScale, false, true, true, ref verticies, ref triangles);
+        MarchingSquares.GenerateMarchingSquares(voxels, chunkSize, chunkScale, false, true, true, verticies, triangles);
 
         mesh.Clear();
         mesh.SetVertices(verticies);
