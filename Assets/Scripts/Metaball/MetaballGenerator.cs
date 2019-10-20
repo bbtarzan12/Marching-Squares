@@ -16,9 +16,15 @@ public class MetaballGenerator : MonoBehaviour
     [SerializeField] Material material;
     [SerializeField] int numCircles = 5;
     [SerializeField] Vector2 chunkScale = new Vector2(1f, 1f);
+    [SerializeField] bool enableJob;
+
+    [SerializeField] bool enableInterpolation;
+    [SerializeField] bool enableTriangleIndexing;
+    [SerializeField] bool enableGreedyMeshing;
 
     Vector2Int gridSize;
 
+    Voxel[,] voxels; // For Managed Version
     Circle[] circles;
 
     // Mesh
@@ -31,11 +37,24 @@ public class MetaballGenerator : MonoBehaviour
     List<int> triangles = new List<int>();
 
     EdgeCollider2D edgeCollider;
-    
+
+    System.TimeSpan lastTimespan;
+
+    public System.TimeSpan GetLastCalculateTime => lastTimespan;
+    public int GetNumVertices => mesh.vertexCount;
+    public int GetNumTriangles => mesh.triangles.Length;
+
+    public bool EnableInterpolation => enableInterpolation;
+    public bool EnableTriangleIndexing => enableTriangleIndexing;
+    public bool EnableGreedyMeshing => enableGreedyMeshing;
+    public bool EnableJob => enableJob;
+
+
     void Awake()
     {
         gridSize = chunkSize + Vector2Int.one;
-        
+        voxels = new Voxel[gridSize.x, gridSize.y];
+
         meshFilter = GetComponent<MeshFilter>();
         meshRenderer = GetComponent<MeshRenderer>();
         mesh = new Mesh();
@@ -63,7 +82,6 @@ public class MetaballGenerator : MonoBehaviour
         edgeCollider.points = new[] {new Vector2(0, 0), new Vector2(0, gridSize.y), new Vector2(gridSize.x, gridSize.y), new Vector2(gridSize.x, 0), new Vector2(0, 0)};
         edgeCollider.edgeRadius = 1.0f;
     }
-
     
     [BurstCompile]
     struct MetaballDensityJob : IJobParallelFor
@@ -93,8 +111,45 @@ public class MetaballGenerator : MonoBehaviour
             voxels[index] = voxel;
         }
     }
-    
-    unsafe void Update()
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.J))
+        {
+            enableJob = !enableJob;
+        }
+        
+        if (Input.GetKeyDown(KeyCode.I))
+        {
+            enableInterpolation = !enableInterpolation;
+        }
+
+        if (Input.GetKeyDown(KeyCode.T))
+        {
+            enableTriangleIndexing = !enableTriangleIndexing;
+        }
+
+        if (Input.GetKeyDown(KeyCode.G))
+        {
+            enableGreedyMeshing = !enableGreedyMeshing;
+        }
+
+        System.Diagnostics.Stopwatch stopwatch = new System.Diagnostics.Stopwatch();
+        stopwatch.Start();
+        if (enableJob)
+        {
+            MarchingSquaresWithJob();
+        }
+        else
+        {
+            MarchingSquaresWithManagedArray();
+        }
+        stopwatch.Stop();
+        lastTimespan = stopwatch.Elapsed;
+        stopwatch.Reset();
+    }
+
+    unsafe void MarchingSquaresWithJob()
     {
         int arraySize = gridSize.x * gridSize.y;
         
@@ -120,7 +175,7 @@ public class MetaballGenerator : MonoBehaviour
         JobHandle handle = job.Schedule(arraySize, 32);
         handle.Complete();
         
-        MarchingSquares.GenerateMarchingSquaresWithJob(nativeVoxels, chunkSize, chunkScale, true, true, false, ref vertices, ref triangles);
+        MarchingSquares.GenerateMarchingSquaresWithJob(nativeVoxels, chunkSize, chunkScale, enableInterpolation, enableTriangleIndexing, enableGreedyMeshing, ref vertices, ref triangles);
         
         mesh.Clear();
         mesh.SetVertices(vertices);
@@ -131,6 +186,32 @@ public class MetaballGenerator : MonoBehaviour
         nativeVoxels.Dispose();
     }
 
+    void MarchingSquaresWithManagedArray()
+    {
+        for (int x = 0; x < chunkSize.x; x++)
+        {
+            for (int y = 0; y < chunkSize.y; y++)
+            {
+                float density = -1.0f;
+                Vector2Int gridPosition = new Vector2Int(x, y);
+
+                foreach (Circle circle in circles)
+                {
+                    float distance = Vector2.Distance(circle.transform.position, gridPosition);
+                    density += Mathf.Clamp(circle.Radius - distance, 0, float.MaxValue);
+                }
+
+                voxels[x, y].Density = density;
+            }
+        }
+
+        MarchingSquares.GenerateMarchingSquares(voxels, chunkSize, chunkScale, enableInterpolation, enableTriangleIndexing, enableGreedyMeshing, ref vertices, ref triangles);
+        
+        mesh.Clear();
+        mesh.SetVertices(vertices);
+        mesh.SetTriangles(triangles, 0);
+    }
+    
 }
 
 

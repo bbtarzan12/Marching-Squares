@@ -50,7 +50,7 @@ unsafe public struct NativeCounter
         Count = 0;
     }
 
-    public void Increment()
+    public int Increment()
     {
         // Verify that the caller has write permission on this data.
         // This is the race condition protection, without these checks the AtomicSafetyHandle is useless
@@ -58,6 +58,7 @@ unsafe public struct NativeCounter
         AtomicSafetyHandle.CheckWriteAndThrow(m_Safety);
 #endif
         (*m_Counter)++;
+        return (*m_Counter) - 1;
     }
 
     public int Count

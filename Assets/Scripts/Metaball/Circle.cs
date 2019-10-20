@@ -31,9 +31,9 @@ public class Circle : MonoBehaviour
         circleCollider.radius = radius;
     }
 
-    void Update()
+    void FixedUpdate()
     {
-        rigidBody.MovePosition(rigidBody.position + Time.deltaTime * speed * rigidBody.velocity);
+        rigidBody.MovePosition(rigidBody.position + Time.fixedDeltaTime * speed * rigidBody.velocity);
     }
 
     void OnCollisionEnter2D(Collision2D other)

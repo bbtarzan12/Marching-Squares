@@ -9,18 +9,11 @@ using UnityEngine;
 
 public static class MarchingSquares
 {
-   
-    static unsafe void NativeAddRange<T>(this List<T> list, NativeSlice<T> nativeSlice)
-        where T : struct
-    {
-        NativeAddRange(list, nativeSlice.GetUnsafePtr(), nativeSlice.Length);
-    }
- 
-    static unsafe void NativeAddRange<T>(List<T> list, void* arrayBuffer, int length)
-        where T : struct
+    
+    static unsafe void NativeAddRange<T>(this List<T> list, NativeSlice<T> nativeSlice) where T : struct
     {
         var index = list.Count;
-        var newLength = index + length;
+        var newLength = index + nativeSlice.Length;
  
         // Resize our list if we require
         if (list.Capacity < newLength)
@@ -35,7 +28,7 @@ public static class MarchingSquares
         var bufferStart = (IntPtr) UnsafeUtility.AddressOf(ref items[0]);
         var buffer = (byte*)(bufferStart + (size * index));
  
-        UnsafeUtility.MemCpy(buffer, arrayBuffer, length * (long) size);
+        UnsafeUtility.MemCpy(buffer, nativeSlice.GetUnsafePtr(), nativeSlice.Length * (long) size);
  
         NoAllocHelpers.ResizeList(list, newLength);
     }
@@ -53,7 +46,7 @@ public static class MarchingSquares
 
 
         [NativeDisableParallelForRestriction] [WriteOnly] public NativeArray<Vector3> vertices;
-        [NativeDisableParallelForRestriction] [WriteOnly] public NativeArray<int> triangles;
+        [WriteOnly] public NativeArray<bool> quadMap;
         [WriteOnly] public NativeCounter.Concurrent counter;
         
         public unsafe void Execute(int idx)
@@ -68,7 +61,7 @@ public static class MarchingSquares
             {
                 densities[i] = voxels[(x + CornerTable[i].x) + (y + CornerTable[i].y) * (chunkSize.x + 1)].Density;
             }
-
+            
             Vector2Int gridPosition = new Vector2Int(x, y);
 
             // 교차하는 지점을 찾는다
@@ -127,43 +120,96 @@ public static class MarchingSquares
                 finalPoints[i] = interpolatedPoints[i - 4];
             }
 
-            // 삼각형 만들기
-            for (int i = 0; i < 9; i += 3)
+            if (intersectionBits == 15 && (triangleIndexing || greedyMeshing))
             {
-                int index0 = TriangleTable[intersectionBits][i];
-                int index1 = TriangleTable[intersectionBits][i + 1];
-                int index2 = TriangleTable[intersectionBits][i + 2];
-
-                if (index0 == -1 || index1 == -1 || index2 == -1)
-                    break;
-
-                Vector3 vertex0 = finalPoints[index0] * chunkScale;
-                Vector3 vertex1 = finalPoints[index1] * chunkScale;
-                Vector3 vertex2 = finalPoints[index2] * chunkScale;
-
-                int triangleIndex = counter.Increment() * 3;
-                vertices[triangleIndex] = vertex0;
-                vertices[triangleIndex + 1] = vertex1;
-                vertices[triangleIndex + 2] = vertex2;
-                
-                triangles[triangleIndex] = triangleIndex;
-                triangles[triangleIndex + 1] = triangleIndex + 1;
-                triangles[triangleIndex + 2] = triangleIndex + 2;
+                quadMap[idx] = true;
             }
-            
+            else
+            {
+                quadMap[idx] = false;
+                
+                // 삼각형 만들기
+                for (int i = 0; i < 9; i += 3)
+                {
+                    int index0 = TriangleTable[intersectionBits][i];
+                    int index1 = TriangleTable[intersectionBits][i + 1];
+                    int index2 = TriangleTable[intersectionBits][i + 2];
+
+                    if (index0 == -1 || index1 == -1 || index2 == -1)
+                        break;
+                
+                    Vector3 vertex0 = finalPoints[index0] * chunkScale;
+                    Vector3 vertex1 = finalPoints[index1] * chunkScale;
+                    Vector3 vertex2 = finalPoints[index2] * chunkScale;
+
+                    int triangleIndex = counter.Increment() * 3;
+                    vertices[triangleIndex] = vertex0;
+                    vertices[triangleIndex + 1] = vertex1;
+                    vertices[triangleIndex + 2] = vertex2;
+                }   
+            }
         }
     }
-    
+
+    [BurstCompile]
+    struct AddTriangleIndexForNoIndexing : IJobParallelFor
+    {
+        [WriteOnly] public NativeArray<int> triangles;
+        
+        public void Execute(int index)
+        {
+            triangles[index] = index;
+        }
+    }
+
+    [BurstCompile]
+    struct MakeQuadJob : IJobParallelFor
+    {
+        [ReadOnly] public Vector2Int chunkSize;
+        [ReadOnly] public Vector2 chunkScale;
+        [ReadOnly] public NativeArray<bool> quadMap;
+
+        [NativeDisableParallelForRestriction] [WriteOnly] public NativeArray<Vector3> vertices;
+        [NativeDisableParallelForRestriction] [WriteOnly] public NativeArray<int> triangles;
+        [WriteOnly] public NativeCounter.Concurrent counter;
+        
+        public void Execute(int idx)
+        {
+            int x = idx % chunkSize.x;
+            int y = idx / chunkSize.x;
+
+            if (!quadMap[idx])
+                return;
+
+            int triangleIndex = counter.Increment() * 3;
+            for (int i = 0; i < 3; i++)
+            {
+                 Vector3 vertex = new Vector3(CornerTable[TriangleTable[15][i]].x + x, CornerTable[TriangleTable[15][i]].y + y, 0) * chunkScale;
+                 vertices[triangleIndex + i] = vertex;
+                 triangles[triangleIndex + i] = triangleIndex + i;
+            }
+            
+            triangleIndex = counter.Increment() * 3;
+            for (int i = 0; i < 3; i++)
+            {
+                Vector3 vertex = new Vector3(CornerTable[TriangleTable[15][i + 3]].x + x, CornerTable[TriangleTable[15][i + 3]].y + y, 0) * chunkScale;
+                vertices[triangleIndex + i] = vertex;
+                triangles[triangleIndex + i] = triangleIndex + i;
+            }
+        }
+    }
+
     public static void GenerateMarchingSquaresWithJob(NativeArray<Voxel> nativeVoxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, ref List<Vector3> vertices, ref List<int> triangles)
     {
         NativeArray<Vector3> nativeVertices = new NativeArray<Vector3>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
         NativeArray<int> nativeTriangles = new NativeArray<int>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
+        NativeArray<bool> nativeQuadMap = new NativeArray<bool> (chunkSize.x * chunkSize.y, Allocator.TempJob);
         NativeCounter counter = new NativeCounter(Allocator.TempJob);
         
-        MarchingSquaresJob job = new MarchingSquaresJob
+        MarchingSquaresJob marchingSquaresJob = new MarchingSquaresJob
         {
             vertices = nativeVertices,
-            triangles = nativeTriangles,
+            quadMap = nativeQuadMap,
             counter = counter.ToConcurrent(),
             voxels = nativeVoxels,
             chunkSize = chunkSize,
@@ -173,13 +219,49 @@ public static class MarchingSquares
             greedyMeshing = greedyMeshing
         };
         
-        JobHandle jobHandle = job.Schedule(chunkSize.x * chunkSize.y, 32);
-        jobHandle.Complete();
+        JobHandle marchingSquaresJobHandle = marchingSquaresJob.Schedule(chunkSize.x * chunkSize.y, 32);
+        marchingSquaresJobHandle.Complete();
 
-        int arraySize = counter.Count * 3;
-        
-        NativeSlice<Vector3> nativeSliceVertices = new NativeSlice<Vector3>(nativeVertices, 0, arraySize);
-        NativeSlice<int> nativeSliceTriangles = new NativeSlice<int>(nativeTriangles, 0, arraySize);
+        if (greedyMeshing)
+        {
+            GreedyMeshingForJob(chunkSize, chunkScale, nativeVertices, counter, nativeQuadMap);
+        }
+        else
+        {
+            MakeQuadJob quadJob = new MakeQuadJob
+            {
+                chunkSize = chunkSize,
+                chunkScale = chunkScale,
+                vertices = nativeVertices,
+                triangles = nativeTriangles,
+                quadMap = nativeQuadMap,
+                counter = counter.ToConcurrent()
+            };
+
+            JobHandle quadJobHandle = quadJob.Schedule(chunkSize.x * chunkSize.y, 32);
+            quadJobHandle.Complete();
+        }
+
+        int verticeSize = counter.Count * 3;
+        int triangleSize = verticeSize;
+
+        if (triangleIndexing)
+        {
+            verticeSize = TriangleIndexingForJob(nativeVertices, nativeTriangles, verticeSize);
+        }
+        else
+        {
+            AddTriangleIndexForNoIndexing triangleJob = new AddTriangleIndexForNoIndexing
+            {
+                triangles = nativeTriangles
+            };
+
+            JobHandle triangleJobHandle = triangleJob.Schedule(verticeSize, 32);
+            triangleJobHandle.Complete();
+        }
+
+        NativeSlice<Vector3> nativeSliceVertices = new NativeSlice<Vector3>(nativeVertices, 0, verticeSize);
+        NativeSlice<int> nativeSliceTriangles = new NativeSlice<int>(nativeTriangles, 0, triangleSize);
 
         vertices.Clear();
         triangles.Clear();
@@ -188,14 +270,146 @@ public static class MarchingSquares
         triangles.NativeAddRange(nativeSliceTriangles);
 
         counter.Dispose();
+        nativeQuadMap.Dispose();
         nativeVertices.Dispose();
         nativeTriangles.Dispose();
     }
-    
-    public static void GenerateMarchingSquares(Voxel[,] voxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, ref List<Vector3> verticies, ref List<int> triangles)
+
+    static void GreedyMeshingForJob(Vector2Int chunkSize, Vector2 chunkScale, NativeArray<Vector3> vertices, NativeCounter counter, NativeArray<bool> quadSet)
     {
-        Dictionary<Vector3, int> points = new Dictionary<Vector3, int>();
-        Dictionary<Vector2Int, Vector3[]> quadTriangles = new Dictionary<Vector2Int, Vector3[]>();
+        for (int x = 0; x < chunkSize.x; x++)
+        {
+            for (int y = 0; y < chunkSize.y;)
+            {
+                int idx = x + y * chunkSize.x;
+                Vector2Int gridPosition = new Vector2Int(x, y);
+                if (!quadSet[idx])
+                {
+                    y++;
+                    continue;
+                }
+
+                // 높이 계산
+                int height = 0;
+                for (int dy = gridPosition.y; dy < chunkSize.y; dy++)
+                {
+                    Vector2Int subGridPosition = new Vector2Int(gridPosition.x, dy);
+                    if (!quadSet[subGridPosition.x + subGridPosition.y * chunkSize.x])
+                    {
+                        break;
+                    }
+
+                    height++;
+                }
+
+                // 넓이 계산
+                int width = 1;
+                bool done = false;
+                for (int dx = gridPosition.x + 1; dx < chunkSize.x; dx++)
+                {
+                    for (int dy = gridPosition.y; dy < gridPosition.y + height && dy < chunkSize.y; dy++)
+                    {
+                        Vector2Int subGridPosition = new Vector2Int(dx, dy);
+                        if (!quadSet[subGridPosition.x + subGridPosition.y * chunkSize.x])
+                        {
+                            done = true;
+                            break;
+                        }
+                    }
+
+                    if (done)
+                    {
+                        break;
+                    }
+
+                    width++;
+                }
+
+                // 사용한 quadMap 삭제하기
+                for (int dx = gridPosition.x; dx < gridPosition.x + width; dx++)
+                {
+                    for (int dy = gridPosition.y; dy < gridPosition.y + height; dy++)
+                    {
+                        quadSet[dx + dy * chunkSize.x] = false;
+                    }
+                }
+
+                // width height 만큼 mesh 만들기
+                Vector2Int size = new Vector2Int(width, height);
+                Vector3[] quad =  {(gridPosition + CornerTable[0] * size) * chunkScale, (gridPosition + CornerTable[1] * size) * chunkScale, (gridPosition + CornerTable[2] * size) * chunkScale, (gridPosition + CornerTable[3] * size) * chunkScale};
+
+                for (int i = 0; i < 6; i += 3)
+                {
+                    int index0 = TriangleTable[15][i];
+                    int index1 = TriangleTable[15][i + 1];
+                    int index2 = TriangleTable[15][i + 2];
+
+                    Vector3 vertex0 = quad[index0];
+                    Vector3 vertex1 = quad[index1];
+                    Vector3 vertex2 = quad[index2];
+
+                    int triangleIndex = counter.Increment() * 3;
+                    
+                    vertices[triangleIndex] = vertex0;
+                    vertices[triangleIndex + 1] = vertex1;
+                    vertices[triangleIndex + 2] = vertex2;
+                }
+
+                y += height;
+            }
+        }
+    }
+
+    static int TriangleIndexingForJob(NativeArray<Vector3> vertices, NativeArray<int> triangles, int arraySize)
+    {
+        // Fix IL2CPP
+        if (points == null)
+        {
+            points = new Dictionary<Vector3, int>();
+        }
+
+        points.Clear();
+
+        for (int i = 0; i < arraySize; i++)
+        {
+            if (points.ContainsKey(vertices[i]))
+            {
+                triangles[i] = points[vertices[i]];
+            }
+            else
+            {
+                int numTriangles = points.Count;
+                points.Add(vertices[i], numTriangles);
+                triangles[i] = numTriangles;
+                vertices[numTriangles] = vertices[i];
+            }
+        }
+
+        return points.Count;
+    }
+
+    // For avoid GC
+    static Dictionary<Vector3, int> points;
+    static Dictionary<Vector2Int, Vector3[]> quadTriangles;
+
+    public static void GenerateMarchingSquares(Voxel[,] voxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, ref List<Vector3> vertices, ref List<int> triangles)
+    {
+        vertices.Clear();
+        triangles.Clear();
+
+        // Fix IL2CPP
+        if (points == null)
+        {
+            points = new Dictionary<Vector3, int>();
+        }
+
+        if (quadTriangles == null)
+        {
+            quadTriangles = new Dictionary<Vector2Int, Vector3[]>();
+        }
+        
+        points.Clear();
+        quadTriangles.Clear();
 
         for (int x = 0; x < chunkSize.x; x++)
         {
@@ -225,11 +439,9 @@ public static class MarchingSquares
                 // 교차하는 지점이 없다면 끝낸다.
                 if(intersectionBits == 0)
                     continue;
-
                 
                 // 교차하는 변 찾기
                 int edgeBits = EdgeTable[intersectionBits];
-
                 
                 // 교차하는 변의 교차점 보간하여 찾기
                 Vector2[] interpolatedPoints = new Vector2[4];
@@ -265,7 +477,7 @@ public static class MarchingSquares
                     finalPoints[i] = interpolatedPoints[i - 4];
                 }
 
-                if (intersectionBits == 15)
+                if (intersectionBits == 15 && (triangleIndexing || greedyMeshing))
                 {
                     quadTriangles.Add(gridPosition, new Vector3[6]);
                 }
@@ -285,7 +497,7 @@ public static class MarchingSquares
                     Vector3 vertex2 = finalPoints[index2] * chunkScale;
                     
                     // 꽉찬 사각형은 나중에 쓸일이 따로 있으므로 따로 추가하고 넘긴다
-                    if (intersectionBits == 15)
+                    if (intersectionBits == 15 && (triangleIndexing || greedyMeshing))
                     {
                         quadTriangles[gridPosition][i] = vertex0;
                         quadTriangles[gridPosition][i + 1] = vertex1;
@@ -330,9 +542,9 @@ public static class MarchingSquares
                     }
                     else
                     {
-                        verticies.Add(vertex0);
-                        verticies.Add(vertex1);
-                        verticies.Add(vertex2);
+                        vertices.Add(vertex0);
+                        vertices.Add(vertex1);
+                        vertices.Add(vertex2);
 
                         int numTriangles = triangles.Count;
                         triangles.Add(numTriangles++);
@@ -392,7 +604,7 @@ public static class MarchingSquares
                         width++;
                     }
 
-                    // 사용한 quadTriangles 삭제하기
+                    // 사용한 quadMap 삭제하기
                     for (int dx = gridPosition.x; dx < gridPosition.x + width; dx++)
                     {
                         for (int dy = gridPosition.y; dy < gridPosition.y + height; dy++)
@@ -458,9 +670,9 @@ public static class MarchingSquares
                         }
                         else
                         {
-                            verticies.Add(vertex0);
-                            verticies.Add(vertex1);
-                            verticies.Add(vertex2);
+                            vertices.Add(vertex0);
+                            vertices.Add(vertex1);
+                            vertices.Add(vertex2);
                         
                             int numTriangle = triangles.Count;
                             triangles.Add(numTriangle++);
@@ -479,40 +691,25 @@ public static class MarchingSquares
             // 앞서 추가하지 않은 꽉찬 사각형(1111) 추가
             foreach (Vector3[] quad in quadTriangles.Values)
             {
-                if (triangleIndexing)
+                foreach (Vector3 vertex in quad)
                 {
-                    foreach (Vector3 vertex in quad)
+                    if (points.ContainsKey(vertex))
                     {
-                        if (points.ContainsKey(vertex))
-                        {
-                            triangles.Add(points[vertex]);
-                        }
-                        else
-                        {
-                            int index = points.Count;
-                            points.Add(vertex, index);
-                            triangles.Add(index);
-                        }
+                        triangles.Add(points[vertex]);
+                    }
+                    else
+                    {
+                        int index = points.Count;
+                        points.Add(vertex, index);
+                        triangles.Add(index);
                     }
                 }
-                else
-                {
-                    verticies.AddRange(quad);
-
-                    int numTriangle = triangles.Count;
-                    triangles.Add(numTriangle++);
-                    triangles.Add(numTriangle++);
-                    triangles.Add(numTriangle++);
-                    triangles.Add(numTriangle++);
-                    triangles.Add(numTriangle++);
-                    triangles.Add(numTriangle);
-                }
-            }   
+            }
         }
 
         if (triangleIndexing)
         {
-            verticies = new List<Vector3>(points.Keys);
+            vertices.AddRange(points.Keys);
         }
     }
 
@@ -634,14 +831,14 @@ public static class MarchingSquares
             }
         }
         
-        int value0;
-        int value1;
-        int value2;
-        int value3;
-        int value4;
-        int value5;
-        int value6;
-        int value7;
-        int value8;
+        readonly int value0;
+        readonly int value1;
+        readonly int value2;
+        readonly int value3;
+        readonly int value4;
+        readonly int value5;
+        readonly int value6;
+        readonly int value7;
+        readonly int value8;
     }
 }
