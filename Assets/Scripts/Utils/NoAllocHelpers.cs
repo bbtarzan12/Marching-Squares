@@ -1,8 +1,7 @@
-﻿ using System;
-    using System.Collections.Generic;
-    using System.Reflection;
- 
-    using UnityEngine;
+﻿using System;
+using System.Collections.Generic;
+using System.Reflection;
+using UnityEngine;
 
  /// <summary>
  /// Provides access to the internal UnityEngine.NoAllocHelpers methods.

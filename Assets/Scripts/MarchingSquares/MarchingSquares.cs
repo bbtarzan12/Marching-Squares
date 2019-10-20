@@ -9,13 +9,7 @@ using UnityEngine;
 
 public static class MarchingSquares
 {
-    static unsafe void CopyToFast<T>(this NativeSlice<T> nativeSlice, T[] array) where T : struct {
-        int byteLength = nativeSlice.Length * UnsafeUtility.SizeOf(typeof(T));
-        void* managedBuffer = UnsafeUtility.AddressOf(ref array[0]);
-        void* nativeBuffer = nativeSlice.GetUnsafePtr();
-        UnsafeUtility.MemCpy(managedBuffer, nativeBuffer, byteLength);
-    }
-    
+   
     static unsafe void NativeAddRange<T>(this List<T> list, NativeSlice<T> nativeSlice)
         where T : struct
     {
@@ -160,7 +154,7 @@ public static class MarchingSquares
         }
     }
     
-    public static unsafe void GenerateMarchingSquaresWithJob(NativeArray<Voxel> nativeVoxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, ref List<Vector3> vertices, ref List<int> triangles)
+    public static void GenerateMarchingSquaresWithJob(NativeArray<Voxel> nativeVoxels, Vector2Int chunkSize, Vector2 chunkScale, bool interpolate, bool triangleIndexing, bool greedyMeshing, ref List<Vector3> vertices, ref List<int> triangles)
     {
         NativeArray<Vector3> nativeVertices = new NativeArray<Vector3>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
         NativeArray<int> nativeTriangles = new NativeArray<int>(9 * chunkSize.x * chunkSize.y , Allocator.TempJob);
