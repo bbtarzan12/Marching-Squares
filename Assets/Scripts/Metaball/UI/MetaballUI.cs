@@ -46,22 +46,22 @@ public class MetaballUI : MonoBehaviour
 
         if (interpolation != null)
         {
-            interpolation.text = $" <color=#ff0000>I</color>nterpolation : {generator.EnableInterpolation}";
+            interpolation.text = $" <color=#3EBBFF>I</color>nterpolation : {generator.EnableInterpolation}";
         }
         
         if (triangleIndexing != null)
         {
-            triangleIndexing.text = $"<color=#ff0000>T</color>riangleIndexing : {generator.EnableTriangleIndexing}";
+            triangleIndexing.text = $"<color=#3EBBFF>T</color>riangleIndexing : {generator.EnableTriangleIndexing}";
         }
         
         if (greedyMeshing != null)
         {
-            greedyMeshing.text = $"<color=#ff0000>G</color>reedyMeshing : {generator.EnableGreedyMeshing}";
+            greedyMeshing.text = $"<color=#3EBBFF>G</color>reedyMeshing : {generator.EnableGreedyMeshing}";
         }
         
         if (job != null)
         {
-            job.text = $"<color=#ff0000>J</color>ob : {generator.EnableJob}";
+            job.text = $"<color=#3EBBFF>J</color>ob : {generator.EnableJob}";
         }
     }
 }

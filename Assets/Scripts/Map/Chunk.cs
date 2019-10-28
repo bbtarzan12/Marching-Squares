@@ -13,6 +13,11 @@ public class Chunk : MonoBehaviour
     Voxel[,] voxels;
     bool dirty;
     
+    bool enableJob;
+    bool enableInterpolation;
+    bool enableTriangleIndexing;
+    bool enableGreedyMeshing;
+    
     // Mesh
     Mesh mesh;
     MeshFilter meshFilter;
@@ -82,6 +87,24 @@ public class Chunk : MonoBehaviour
         }
     }
 
+    public void SetInterpolation(bool interpolation)
+    {
+        enableInterpolation = interpolation;
+        dirty = true;
+    }
+
+    public void SetTriangleIndexing(bool triangleIndexing)
+    {
+        enableTriangleIndexing = triangleIndexing;
+        dirty = true;
+    }
+
+    public void SetGreedyMeshing(bool greedyMeshing)
+    {
+        enableGreedyMeshing = greedyMeshing;
+        dirty = true;
+    }
+
     public void SetVoxel(Vector2Int worldGridPosition, float value)
     {
         Vector2Int gridPosition = new Vector2Int
@@ -119,7 +142,7 @@ public class Chunk : MonoBehaviour
 
     public void UpdateMesh()
     {
-        MarchingSquares.GenerateMarchingSquares(voxels, chunkSize, chunkScale, false, true, true, verticies, triangles);
+        MarchingSquares.GenerateMarchingSquares(voxels, chunkSize, chunkScale, enableInterpolation, enableTriangleIndexing, enableGreedyMeshing, verticies, triangles);
 
         mesh.Clear();
         mesh.SetVertices(verticies);

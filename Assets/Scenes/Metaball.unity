@@ -518,7 +518,7 @@ Camera:
   m_Enabled: 1
   serializedVersion: 2
   m_ClearFlags: 2
-  m_BackGroundColor: {r: 0.24528301, g: 0.24528301, b: 0.24528301, a: 0}
+  m_BackGroundColor: {r: 0.84705883, g: 0.23921569, b: 0.3372549, a: 0}
   m_projectionMatrixMode: 1
   m_GateFitMode: 2
   m_FOVAxisMode: 0
@@ -602,9 +602,9 @@ MonoBehaviour:
   numCircles: 10
   chunkScale: {x: 0.25, y: 0.25}
   enableJob: 1
-  enableInterpolation: 0
-  enableTriangleIndexing: 0
-  enableGreedyMeshing: 0
+  enableInterpolation: 1
+  enableTriangleIndexing: 1
+  enableGreedyMeshing: 1
 --- !u!68 &1399559808
 EdgeCollider2D:
   m_ObjectHideFlags: 0

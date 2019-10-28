@@ -12,7 +12,11 @@ public class MapGenerator : MonoBehaviour
     [SerializeField] Vector2Int chunkSize;
     [SerializeField] Vector2 chunkScale; 
     [SerializeField] Vector2Int chunkSpawnSize;
-
+    
+    [SerializeField] bool enableInterpolation;
+    [SerializeField] bool enableTriangleIndexing;
+    [SerializeField] bool enableGreedyMeshing;
+    
     [SerializeField] Material mapMaterial;
     [SerializeField] Transform target;
 
@@ -226,6 +230,9 @@ public class MapGenerator : MonoBehaviour
         Chunk newChunk = chunkGameObject.AddComponent<Chunk>();
         newChunk.Init(chunkPosition, chunkSize, chunkScale);
         newChunk.SetMaterial(mapMaterial);
+        newChunk.SetInterpolation(enableInterpolation);
+        newChunk.SetGreedyMeshing(enableGreedyMeshing);
+        newChunk.SetTriangleIndexing(enableTriangleIndexing);
 
         chunks.Add(chunkPosition, newChunk);
         return newChunk;
